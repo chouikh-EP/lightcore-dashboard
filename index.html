@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>LIGHTCORE | Pilotage Maintenance Éclairage Public</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+<style>
+:root{
+--bg:#05070a;--card:#0f121a;--border:#1e2330;
+--accent:#3b82f6;--text:#f8fafc;--muted:#64748b;
+--ok:#10b981;--warn:#f59e0b;--danger:#ef4444;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:'Plus Jakarta Sans',sans-serif;height:100vh}
+.app{display:grid;grid-template-columns:300px 1fr;height:100vh}
+
+/* SIDEBAR */
+aside{background:var(--card);border-right:1px solid var(--border);padding:25px}
+.logo{font-weight:800;font-size:1.2rem}
+.logo span{color:var(--accent)}
+.filters{margin-top:25px;display:flex;flex-direction:column;gap:15px}
+label{font-size:.6rem;font-weight:800;color:var(--muted);text-transform:uppercase}
+input,select{background:#161b26;border:1px solid var(--border);color:white;padding:10px;border-radius:8px;font-size:.75rem}
+
+/* MAIN */
+main{padding:30px;overflow:auto}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:20px;margin-bottom:30px}
+.kpi{background:var(--card);border:1px solid var(--border);padding:20px;border-radius:18px}
+.kpi small{color:var(--muted);font-size:.6rem;font-weight:800}
+.kpi strong{font-size:1.6rem;display:block;margin-top:5px}
+
+.charts{display:grid;grid-template-columns:2fr 1fr;gap:20px;margin-bottom:30px}
+.chart{background:var(--card);border:1px solid var(--border);border-radius:22px;padding:20px;height:340px}
+
+table{width:100%;border-collapse:collapse;font-size:.8rem}
+th{color:var(--muted);font-size:.6rem;text-transform:uppercase;padding:12px;border-bottom:1px solid var(--border)}
+td{padding:12px;border-bottom:1px solid var(--border)}
+.tag{padding:4px 8px;border-radius:6px;font-size:.6rem;font-weight:800}
+</style>
+</head>
+
+<body>
+<div class="app">
+
+<aside>
+<div class="logo">LIGHT<span>CORE</span></div>
+<div class="filters">
+<div><label>Recherche</label><input id="fSearch"></div>
+<div><label>Activité</label><select id="fActivity"><option value="">Toutes</option></select></div>
+<div><label>Classification</label><select id="fClass"><option value="">Toutes</option></select></div>
+</div>
+</aside>
+
+<main>
+
+<div class="kpis">
+<div class="kpi"><small>INTERVENTIONS</small><strong id="kpi-total">0</strong></div>
+<div class="kpi"><small>TAUX OK</small><strong id="kpi-ok" style="color:var(--ok)">0%</strong></div>
+<div class="kpi"><small>NON OK</small><strong id="kpi-nok" style="color:var(--warn)">0</strong></div>
+<div class="kpi"><small>EN RETARD (+7j)</small><strong id="kpi-late" style="color:var(--danger)">0</strong></div>
+<div class="kpi"><small>RUE LA + IMPACTÉE</small><strong id="kpi-street">–</strong></div>
+</div>
+
+<div class="charts">
+<div class="chart"><canvas id="chartBacklog"></canvas></div>
+<div class="chart"><canvas id="chartTypes"></canvas></div>
+</div>
+
+<div class="chart">
+<table>
+<thead>
+<tr><th>Date</th><th>État</th><th>Activité</th><th>Ouvrage / Rue</th></tr>
+</thead>
+<tbody id="tbody"></tbody>
+</table>
+</div>
+
+</main>
+</div>
+
+<script>
+const SLA_DAYS = 7;
+let DB=[],charts={};
+
+function parseFR(d){if(!d)return null;const[a,b,c]=d.split('/');return new Date(c,b-1,a)}
+function days(d){return Math.floor((new Date()-d)/(1000*60*60*24))}
+
+Papa.parse("data/suivi.csv",{
+download:true,header:true,skipEmptyLines:true,
+complete:r=>{
+DB=r.data;
+initFilters();
+refresh(DB);
+}
+});
+
+function initFilters(){
+[...new Set(DB.map(x=>x.Activité).filter(Boolean))].forEach(v=>{
+fActivity.add(new Option(v,v))
+});
+[...new Set(DB.map(x=>x.Classification).filter(Boolean))].forEach(v=>{
+fClass.add(new Option(v,v))
+});
+[fSearch,fActivity,fClass].forEach(e=>e.oninput=applyFilters);
+}
+
+function applyFilters(){
+const s=fSearch.value.toLowerCase();
+const a=fActivity.value,c=fClass.value;
+refresh(DB.filter(r=>
+Object.values(r).join().toLowerCase().includes(s)&&
+(!a||r.Activité===a)&&(!c||r.Classification===c)
+));
+}
+
+function refresh(data){
+kpi-total.innerText=data.length;
+const ok=data.filter(r=>r.Classification==="OK");
+const nok=data.filter(r=>r.Classification&&r.Classification!=="OK");
+kpi-ok.innerText=data.length?Math.round(ok.length/data.length*100)+"%":"0%";
+kpi-nok.innerText=nok.length;
+
+const late=nok.filter(r=>{const d=parseFR(r["Date Intervention"]);return d&&days(d)>SLA_DAYS});
+kpi-late.innerText=late.length;
+
+const streets={};data.forEach(r=>streets[r.Rue]=(streets[r.Rue]||0)+1);
+kpi-street.innerText=Object.entries(streets).sort((a,b)=>b[1]-a[1])[0]?.[0]||"–";
+
+tbody.innerHTML=data.slice(0,30).map(r=>{
+const d=parseFR(r["Date Intervention"]);
+const isLate=d&&days(d)>SLA_DAYS&&r.Classification!=="OK";
+return `<tr>
+<td style="font-family:JetBrains Mono">${r["Date Intervention"]||"-"}</td>
+<td><span class="tag" style="background:${isLate?'#ef444422':'#10b98122'}">${isLate?'RETARD':r.Classification}</span></td>
+<td>${r.Activité||"-"}</td>
+<td><b>${r["Code ouvrage"]||"-"}</b><br><small>${r.Rue||"-"}</small></td>
+</tr>`;
+}).join("");
+
+buildCharts(data);
+}
+
+function buildCharts(data){
+const m={};data.forEach(r=>{
+const d=parseFR(r["Date Intervention"]);if(!d)return;
+const k=`${d.getFullYear()}-${d.getMonth()+1}`;
+m[k]=m[k]||{ok:0,nok:0};
+r.Classification==="OK"?m[k].ok++:m[k].nok++;
+});
+charts.b?.destroy();
+charts.b=new Chart(chartBacklog,{type:'bar',
+data:{labels:Object.keys(m),
+datasets:[
+{label:'OK',data:Object.values(m).map(x=>x.ok),backgroundColor:'#10b981'},
+{label:'Non OK',data:Object.values(m).map(x=>x.nok),backgroundColor:'#ef4444'}
+]},
+options:{responsive:true,scales:{x:{stacked:true},y:{stacked:true}}}
+});
+
+const t={Luminaire:0,Armoire:0};
+data.forEach(r=>t[r["Type d'ouvrage"]]++);
+charts.t?.destroy();
+charts.t=new Chart(chartTypes,{type:'doughnut',
+data:{labels:Object.keys(t),datasets:[{data:Object.values(t),backgroundColor:['#3b82f6','#10b981']}]},
+options:{cutout:'75%'}
+});
+}
+</script>
+</body>
+</html>
