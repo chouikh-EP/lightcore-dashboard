@@ -1,3 +1,12 @@
+function v(r, key) {
+  return (
+    r[key] ??
+    r[key + "_x"] ??
+    r[key.toUpperCase()] ??
+    r[key.replace(/ /g, "_")] ??
+    ""
+  );
+}
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -174,4 +183,5 @@ options:{cutout:'75%'}
 }
 </script>
 </body>
+
 </html>
